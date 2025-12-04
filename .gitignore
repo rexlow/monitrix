@@ -1,0 +1,30 @@
+# Ignore binary builds
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Ignore test binary
+*.test
+
+# Ignore output of go coverage tool
+*.out
+
+# Ignore data files
+data/*.jsonl
+
+# Ignore environment files
+.env
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
