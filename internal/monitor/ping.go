@@ -112,10 +112,6 @@ func (m *Monitor) PingAll() []PingResult {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	if successCount == 0 {
 		fmt.Printf("\n[%s] ⚠️  INTERNET: OFFLINE - All hosts unreachable\n\n", timestamp)
-	} else if successCount < len(m.hosts) {
-		fmt.Printf("\n[%s] ⚡ INTERNET: ONLINE - %d/%d hosts reachable (partial)\n\n", timestamp, successCount, len(m.hosts))
-	} else {
-		fmt.Printf("\n[%s] ✓  INTERNET: ONLINE - All hosts reachable\n\n", timestamp)
 	}
 
 	return results
