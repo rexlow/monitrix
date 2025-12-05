@@ -69,26 +69,24 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 // Stats represents aggregated statistics
 type Stats struct {
-	TotalChecks    int                 `json:"total_checks"`
-	DowntimeEvents []DowntimeEvent     `json:"downtime_events"`
-	HostStats      map[string]HostStat `json:"host_stats"`
+	CurrentStatus      string          `json:"current_status"` // "online" or "offline"
+	TotalChecks        int             `json:"total_checks"`
+	OnlineChecks       int             `json:"online_checks"`
+	OfflineChecks      int             `json:"offline_checks"`
+	UptimePercentage   float64         `json:"uptime_percentage"`
+	TotalDowntimeHours float64         `json:"total_downtime_hours"`
+	DowntimeEvents     []DowntimeEvent `json:"downtime_events"`
+	RecentDowntime     *DowntimeEvent  `json:"recent_downtime,omitempty"`
+	TimeSinceLastCheck *time.Time      `json:"time_since_last_check,omitempty"`
 }
 
-// DowntimeEvent represents a period of downtime
+// DowntimeEvent represents a period of internet connectivity loss
 type DowntimeEvent struct {
-	Host      string    `json:"host"`
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"`
-	Duration  int64     `json:"duration_seconds"`
-}
-
-// HostStat represents statistics for a specific host
-type HostStat struct {
-	TotalPings   int     `json:"total_pings"`
-	SuccessCount int     `json:"success_count"`
-	FailureCount int     `json:"failure_count"`
-	SuccessRate  float64 `json:"success_rate"`
-	AvgLatency   float64 `json:"avg_latency_ms"`
+	StartTime   time.Time  `json:"start_time"`
+	EndTime     *time.Time `json:"end_time,omitempty"` // nil if still ongoing
+	Duration    int64      `json:"duration_seconds"`
+	IsOngoing   bool       `json:"is_ongoing"`
+	FailedHosts []string   `json:"failed_hosts"`
 }
 
 // handleStats returns aggregated statistics
@@ -122,55 +120,111 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // calculateStats computes statistics from log entries
+// Internet is considered DOWN only when ALL hosts fail to respond
 func calculateStats(logs []storage.LogEntry) Stats {
-	hostStats := make(map[string]HostStat)
 	var downtimeEvents []DowntimeEvent
+	var onlineChecks, offlineChecks int
+	var totalDowntimeSeconds int64
 
-	// Track downtime periods
-	lastState := make(map[string]bool)
-	downtimeStart := make(map[string]time.Time)
+	var lastStatus bool // true = online, false = offline
+	var downtimeStart time.Time
+	var downtimeFailedHosts []string
+	var lastCheckTime *time.Time
+	currentStatus := "online"
+
+	statusInitialized := false
 
 	for _, entry := range logs {
+		// Check if ALL hosts failed (= internet is down)
+		allFailed := true
+		var failedHosts []string
+
 		for _, result := range entry.Results {
-			stat := hostStats[result.Host]
-			stat.TotalPings++
-
 			if result.Success {
-				stat.SuccessCount++
-				stat.AvgLatency = (stat.AvgLatency*float64(stat.SuccessCount-1) + float64(result.Latency)) / float64(stat.SuccessCount)
-
-				// Check if this ends a downtime period
-				if wasUp, exists := lastState[result.Host]; exists && !wasUp {
-					downEvent := DowntimeEvent{
-						Host:      result.Host,
-						StartTime: downtimeStart[result.Host],
-						EndTime:   result.Timestamp,
-						Duration:  int64(result.Timestamp.Sub(downtimeStart[result.Host]).Seconds()),
-					}
-					downtimeEvents = append(downtimeEvents, downEvent)
-				}
-				lastState[result.Host] = true
+				allFailed = false
 			} else {
-				stat.FailureCount++
-
-				// Check if this starts a new downtime period
-				if wasUp, exists := lastState[result.Host]; !exists || wasUp {
-					downtimeStart[result.Host] = result.Timestamp
-				}
-				lastState[result.Host] = false
+				failedHosts = append(failedHosts, result.Host)
 			}
-
-			if stat.TotalPings > 0 {
-				stat.SuccessRate = float64(stat.SuccessCount) / float64(stat.TotalPings) * 100
-			}
-
-			hostStats[result.Host] = stat
 		}
+
+		internetOnline := !allFailed
+		lastCheckTime = &entry.Timestamp
+
+		if internetOnline {
+			onlineChecks++
+
+			// Check if this ends a downtime period
+			if statusInitialized && !lastStatus {
+				endTime := entry.Timestamp
+				duration := int64(endTime.Sub(downtimeStart).Seconds())
+				totalDowntimeSeconds += duration
+
+				downEvent := DowntimeEvent{
+					StartTime:   downtimeStart,
+					EndTime:     &endTime,
+					Duration:    duration,
+					IsOngoing:   false,
+					FailedHosts: downtimeFailedHosts,
+				}
+				downtimeEvents = append(downtimeEvents, downEvent)
+			}
+			lastStatus = true
+			currentStatus = "online"
+		} else {
+			offlineChecks++
+
+			// Check if this starts a new downtime period
+			if !statusInitialized || lastStatus {
+				downtimeStart = entry.Timestamp
+				downtimeFailedHosts = failedHosts
+			}
+			lastStatus = false
+			currentStatus = "offline"
+		}
+
+		statusInitialized = true
+	}
+
+	// Handle ongoing downtime
+	if statusInitialized && !lastStatus && lastCheckTime != nil {
+		duration := int64(time.Since(downtimeStart).Seconds())
+		downEvent := DowntimeEvent{
+			StartTime:   downtimeStart,
+			EndTime:     nil,
+			Duration:    duration,
+			IsOngoing:   true,
+			FailedHosts: downtimeFailedHosts,
+		}
+		downtimeEvents = append(downtimeEvents, downEvent)
+		totalDowntimeSeconds += duration
+	}
+
+	totalChecks := len(logs)
+	uptimePercentage := 0.0
+	if totalChecks > 0 {
+		uptimePercentage = float64(onlineChecks) / float64(totalChecks) * 100
+	}
+
+	// Sort downtime events by start time (most recent first)
+	for i := 0; i < len(downtimeEvents)/2; i++ {
+		j := len(downtimeEvents) - 1 - i
+		downtimeEvents[i], downtimeEvents[j] = downtimeEvents[j], downtimeEvents[i]
+	}
+
+	var recentDowntime *DowntimeEvent
+	if len(downtimeEvents) > 0 {
+		recentDowntime = &downtimeEvents[0]
 	}
 
 	return Stats{
-		TotalChecks:    len(logs),
-		DowntimeEvents: downtimeEvents,
-		HostStats:      hostStats,
+		CurrentStatus:      currentStatus,
+		TotalChecks:        totalChecks,
+		OnlineChecks:       onlineChecks,
+		OfflineChecks:      offlineChecks,
+		UptimePercentage:   uptimePercentage,
+		TotalDowntimeHours: float64(totalDowntimeSeconds) / 3600,
+		DowntimeEvents:     downtimeEvents,
+		RecentDowntime:     recentDowntime,
+		TimeSinceLastCheck: lastCheckTime,
 	}
 }

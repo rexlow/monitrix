@@ -37,7 +37,7 @@ RUN mkdir -p /app/data
 EXPOSE 8080
 
 # Set default environment variables
-ENV MONITOR_HOSTS="google.com,apple.com,cloudflare.com,github.com"
+ENV MONITOR_HOSTS="1.1.1.1,8.8.8.8,google.com,cloudflare.com,github.com"
 ENV MONITOR_INTERVAL="30"
 ENV WEB_ADDR="0.0.0.0:8080"
 

@@ -95,6 +95,78 @@
             margin-bottom: 30px;
         }
 
+        .status-banner {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+
+        .status-banner.online {
+            border: 3px solid #00ff88;
+        }
+
+        .status-banner.offline {
+            border: 3px solid #ff4444;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.online {
+            background: #00ff88;
+        }
+
+        .status-indicator.offline {
+            background: #ff4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .status-text.online {
+            color: #00ff88;
+        }
+
+        .status-text.offline {
+            color: #ff4444;
+        }
+
+        .status-detail {
+            font-size: 1.1em;
+            color: #888;
+        }
+
+        .recent-downtime-alert {
+            background: #2a1a1a;
+            border-left: 4px solid #ff4444;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+
+        .recent-downtime-alert h3 {
+            color: #ff4444;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+
         .stat-card {
             background: #1a1a2e;
             padding: 20px;
@@ -149,20 +221,43 @@
             border-left: 4px solid #ff4444;
         }
 
-        .downtime-host {
-            font-weight: bold;
-            color: #ff4444;
-            margin-bottom: 5px;
+        .downtime-item.ongoing {
+            border-left: 4px solid #ff8800;
+            animation: glow 2s infinite;
+        }
+
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 5px rgba(255, 136, 0, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(255, 136, 0, 0.8); }
         }
 
         .downtime-time {
             font-size: 0.9em;
             color: #888;
+            margin-bottom: 5px;
         }
 
         .downtime-duration {
-            font-size: 0.9em;
+            font-size: 1.1em;
             color: #00ff88;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .downtime-ongoing {
+            display: inline-block;
+            background: #ff8800;
+            color: #0f0f23;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .failed-hosts {
+            font-size: 0.85em;
+            color: #ff4444;
             margin-top: 5px;
         }
 
@@ -285,20 +380,22 @@
         <div id="errorContainer"></div>
         <div id="loadingContainer" class="loading">Loading data...</div>
 
+        <div id="statusBanner" style="display: none;"></div>
+
         <div id="statsContainer" style="display: none;">
             <div class="stats-grid" id="statsGrid"></div>
         </div>
 
         <div id="downtimeContainer" style="display: none;">
             <div class="downtime-section">
-                <h2>⚠️ Downtime Events</h2>
+                <h2>⚠️ Internet Downtime History</h2>
                 <div class="downtime-list" id="downtimeList"></div>
             </div>
         </div>
 
         <div id="chartContainer" style="display: none;">
             <div class="chart-section">
-                <h2>📊 Connectivity Timeline</h2>
+                <h2>📊 Internet Connectivity Timeline</h2>
                 <div id="timelineChart"></div>
             </div>
         </div>
@@ -385,25 +482,77 @@
         }
 
         function renderStats(stats) {
-            const container = document.getElementById('statsGrid');
-            const hostStats = stats.host_stats || {};
+            // Render status banner
+            const banner = document.getElementById('statusBanner');
+            const isOnline = stats.current_status === 'online';
+            const statusClass = isOnline ? 'online' : 'offline';
+            const statusIcon = isOnline ? '✓' : '✗';
+            const statusText = isOnline ? 'INTERNET CONNECTED' : 'INTERNET DISCONNECTED';
             
-            let html = '';
+            let bannerHtml = `
+                <div class="status-banner ${statusClass}">
+                    <div>
+                        <span class="status-indicator ${statusClass}"></span>
+                        <span class="status-text ${statusClass}">${statusIcon} ${statusText}</span>
+                    </div>
+                    <div class="status-detail">
+                        Uptime: ${stats.uptime_percentage.toFixed(2)}% | 
+                        ${stats.online_checks} online / ${stats.offline_checks} offline checks
+                    </div>
+            `;
             
-            for (const [host, stat] of Object.entries(hostStats)) {
-                const uptime = stat.success_rate || 0;
-                html += `
-                    <div class="stat-card">
-                        <h3>${host}</h3>
-                        <div class="stat-value">${uptime.toFixed(2)}%</div>
-                        <div class="stat-label">Uptime</div>
-                        <div class="stat-label" style="margin-top: 10px;">
-                            ✓ ${stat.success_count} / ✗ ${stat.failure_count}<br>
-                            Avg Latency: ${stat.avg_latency_ms.toFixed(0)}ms
+            // Show recent downtime alert if exists
+            if (stats.recent_downtime) {
+                const recent = stats.recent_downtime;
+                const duration = formatDuration(recent.duration_seconds);
+                const startTime = new Date(recent.start_time).toLocaleString();
+                const endTime = recent.end_time ? new Date(recent.end_time).toLocaleString() : 'Ongoing';
+                const statusLabel = recent.is_ongoing ? 'ONGOING' : 'Recovered';
+                
+                bannerHtml += `
+                    <div class="recent-downtime-alert">
+                        <h3>⚠️ ${statusLabel} - Most Recent Downtime</h3>
+                        <div class="downtime-time">
+                            <strong>Started:</strong> ${startTime}<br>
+                            <strong>Duration:</strong> ${duration}
+                            ${recent.is_ongoing ? ' <span class="downtime-ongoing">STILL DOWN</span>' : ''}
                         </div>
+                        ${!recent.is_ongoing ? `<div class="downtime-time"><strong>Recovered:</strong> ${endTime}</div>` : ''}
+                        <div class="failed-hosts">Failed to reach: ${recent.failed_hosts.join(', ')}</div>
                     </div>
                 `;
             }
+            
+            bannerHtml += '</div>';
+            banner.innerHTML = bannerHtml;
+            banner.style.display = 'block';
+            
+            // Render summary statistics
+            const container = document.getElementById('statsGrid');
+            const totalDowntime = stats.total_downtime_hours;
+            
+            let html = `
+                <div class="stat-card">
+                    <h3>Uptime Percentage</h3>
+                    <div class="stat-value">${stats.uptime_percentage.toFixed(2)}%</div>
+                    <div class="stat-label">${stats.online_checks} of ${stats.total_checks} checks successful</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Downtime</h3>
+                    <div class="stat-value">${totalDowntime.toFixed(2)}h</div>
+                    <div class="stat-label">${(totalDowntime * 60).toFixed(0)} minutes offline</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Downtime Events</h3>
+                    <div class="stat-value">${stats.downtime_events.length}</div>
+                    <div class="stat-label">Internet connection losses</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Current Status</h3>
+                    <div class="stat-value ${statusClass}">${isOnline ? 'Online' : 'Offline'}</div>
+                    <div class="stat-label">Right now</div>
+                </div>
+            `;
             
             container.innerHTML = html;
             document.getElementById('statsContainer').style.display = 'block';
@@ -413,21 +562,28 @@
             const container = document.getElementById('downtimeList');
             
             if (!events || events.length === 0) {
-                container.innerHTML = '<div class="no-data">No downtime events in selected range 🎉</div>';
+                container.innerHTML = '<div class="no-data">No internet downtime events in selected range 🎉</div>';
             } else {
                 let html = '';
-                events.forEach(event => {
+                events.forEach((event, index) => {
                     const start = new Date(event.start_time);
-                    const end = new Date(event.end_time);
+                    const end = event.end_time ? new Date(event.end_time) : null;
                     const duration = formatDuration(event.duration_seconds);
+                    const itemClass = event.is_ongoing ? 'downtime-item ongoing' : 'downtime-item';
+                    const isRecent = index === 0; // Most recent is first
                     
                     html += `
-                        <div class="downtime-item">
-                            <div class="downtime-host">${event.host}</div>
+                        <div class="${itemClass}">
+                            ${isRecent ? '<div style="color: #ff8800; font-weight: bold; margin-bottom: 5px;">📍 MOST RECENT</div>' : ''}
                             <div class="downtime-time">
-                                ${start.toLocaleString()} → ${end.toLocaleString()}
+                                <strong>Started:</strong> ${start.toLocaleString()}
                             </div>
-                            <div class="downtime-duration">Duration: ${duration}</div>
+                            ${end ? `<div class="downtime-time"><strong>Ended:</strong> ${end.toLocaleString()}</div>` : ''}
+                            <div class="downtime-duration">
+                                Duration: ${duration}
+                                ${event.is_ongoing ? ' <span class="downtime-ongoing">ONGOING</span>' : ''}
+                            </div>
+                            <div class="failed-hosts">All hosts failed: ${event.failed_hosts.join(', ')}</div>
                         </div>
                     `;
                 });
@@ -454,43 +610,40 @@
                 return;
             }
 
-            // Group by host
-            const hostData = {};
-            logs.forEach(entry => {
-                entry.results.forEach(result => {
-                    if (!hostData[result.host]) {
-                        hostData[result.host] = [];
-                    }
-                    hostData[result.host].push(result);
-                });
+            // Calculate internet connectivity status for each check
+            const connectivityData = logs.map(entry => {
+                // Internet is DOWN only if ALL hosts failed
+                const allFailed = entry.results.every(result => !result.success);
+                const failedHosts = entry.results.filter(r => !r.success).map(r => r.host);
+                
+                return {
+                    timestamp: entry.timestamp,
+                    online: !allFailed,
+                    failedHosts: failedHosts
+                };
             });
 
-            let html = '';
-            let yOffset = 0;
+            let html = '<div class="host-section">';
+            html += '<div class="host-header">Internet Connectivity Status</div>';
+            html += '<div class="timeline">';
             
-            for (const [host, results] of Object.entries(hostData)) {
-                html += `<div class="host-section">`;
-                html += `<div class="host-header">${host}</div>`;
-                html += `<div class="timeline">`;
+            connectivityData.forEach((check, index) => {
+                const cssClass = check.online ? 'success' : 'failure';
+                const left = (index / connectivityData.length) * 100;
+                const width = (1 / connectivityData.length) * 100;
+                const timestamp = new Date(check.timestamp).toLocaleString();
+                const status = check.online ? 'ONLINE' : 'OFFLINE';
+                const failedInfo = check.failedHosts.length > 0 ? `\nFailed: ${check.failedHosts.join(', ')}` : '';
                 
-                results.forEach((result, index) => {
-                    const cssClass = result.success ? 'success' : 'failure';
-                    const left = (index / results.length) * 100;
-                    const width = (1 / results.length) * 100;
-                    const timestamp = new Date(result.timestamp).toLocaleString();
-                    const status = result.success ? 'UP' : 'DOWN';
-                    const latency = result.latency_ms;
-                    
-                    html += `
-                        <div class="timeline-bar ${cssClass}" 
-                             style="left: ${left}%; width: ${width}%; top: 20px;"
-                             title="${timestamp}\nStatus: ${status}\nLatency: ${latency}ms">
-                        </div>
-                    `;
-                });
-                
-                html += `</div></div>`;
-            }
+                html += `
+                    <div class="timeline-bar ${cssClass}" 
+                         style="left: ${left}%; width: ${width}%; top: 20px;"
+                         title="${timestamp}\nStatus: ${status}${failedInfo}">
+                    </div>
+                `;
+            });
+            
+            html += '</div></div>';
             
             container.innerHTML = html;
             document.getElementById('chartContainer').style.display = 'block';

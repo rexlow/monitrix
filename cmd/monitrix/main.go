@@ -34,12 +34,13 @@ func getHosts() []string {
 		}
 		return hosts
 	}
-	// Default hosts
+	// Default hosts - using reliable, geographically distributed services
 	return []string{
-		"google.com",
-		"apple.com",
-		"cloudflare.com",
-		"github.com",
+		"1.1.1.1",        // Cloudflare DNS (very reliable)
+		"8.8.8.8",        // Google DNS (very reliable)
+		"google.com",     // Google (Americas)
+		"cloudflare.com", // Cloudflare (Global CDN)
+		"github.com",     // GitHub (Tech infrastructure)
 	}
 }
 
