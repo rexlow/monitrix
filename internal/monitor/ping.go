@@ -33,6 +33,7 @@ func NewMonitor(hosts []string, interval, timeout time.Duration) *Monitor {
 }
 
 // Ping performs multiple connection tests to the host for reliability
+// Connections taking more than 10 seconds are considered failures
 func (m *Monitor) Ping(host string) PingResult {
 	start := time.Now()
 	result := PingResult{
@@ -40,23 +41,28 @@ func (m *Monitor) Ping(host string) PingResult {
 		Timestamp: start,
 	}
 
+	// Maximum acceptable latency (10 seconds)
+	maxAcceptableLatency := int64(10000) // 10 seconds in milliseconds
+
 	// First, verify DNS resolution
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
 	resolver := &net.Resolver{}
 	addrs, dnsErr := resolver.LookupHost(ctx, host)
+	dnsLatency := time.Since(start).Milliseconds()
+
 	if dnsErr != nil {
 		result.Success = false
 		result.Error = fmt.Sprintf("DNS lookup failed: %v", dnsErr)
-		result.Latency = time.Since(start).Milliseconds()
+		result.Latency = dnsLatency
 		return result
 	}
 
 	if len(addrs) == 0 {
 		result.Success = false
 		result.Error = "No IP addresses found for host"
-		result.Latency = time.Since(start).Milliseconds()
+		result.Latency = dnsLatency
 		return result
 	}
 
@@ -70,6 +76,13 @@ func (m *Monitor) Ping(host string) PingResult {
 
 		if err == nil {
 			conn.Close()
+			if latency > maxAcceptableLatency {
+				result.Success = false
+				result.Error = fmt.Sprintf("Connection too slow: %dms (max acceptable: %dms)", latency, maxAcceptableLatency)
+				result.Latency = latency
+				return result
+			}
+
 			result.Success = true
 			result.Latency = latency
 			return result
@@ -96,16 +109,22 @@ func (m *Monitor) PingAll() []PingResult {
 		results = append(results, result)
 
 		status := "✗ FAIL"
+		errorMsg := ""
 		if result.Success {
 			status = "✓ OK"
 			successCount++
+		} else if result.Error != "" {
+			errorMsg = fmt.Sprintf(" [%s]", result.Error)
+			if len(errorMsg) > 60 {
+				errorMsg = errorMsg[:57] + "...]"
+			}
 		}
 
-		fmt.Printf("  %s %-20s %s (latency: %dms)\n",
+		fmt.Printf("  %s %-20s (latency: %dms)%s\n",
 			status,
 			result.Host,
-			"",
-			result.Latency)
+			result.Latency,
+			errorMsg)
 	}
 
 	// Overall connectivity status
