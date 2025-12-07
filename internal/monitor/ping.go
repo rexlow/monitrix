@@ -60,8 +60,7 @@ func (m *Monitor) Ping(host string) PingResult {
 		return result
 	}
 
-	// Try multiple ports for better detection (HTTPS first, then HTTP)
-	ports := []string{"443", "80"}
+	ports := []string{"443"}
 	var lastErr error
 
 	for _, port := range ports {

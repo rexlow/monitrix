@@ -118,7 +118,7 @@ func main() {
 	server := api.NewServer(dataDir, webDir)
 	go func() {
 		if err := server.Start(webAddr); err != nil {
-			fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
+			panic(err)
 		}
 	}()
 
